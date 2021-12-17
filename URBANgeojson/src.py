@@ -6,6 +6,55 @@ import json
 import datetime
 import xmltodict
 
+import utm
+import pandas as pd
+import datetime
+
+
+def theta(v1, v2):
+    return np.arccos(np.dot(v1,v2.T)/(np.linalg.norm(v1) * np.linalg.norm(v2))) / np.pi * 180
+
+def leftButtomCornerID(coordinates):
+    xy_min = coordinates.min(axis = 0)
+    d = np.sum((coordinates - xy_min)**2, axis =1)
+    idx = np.argmin(d)
+    return idx
+
+def leftButtomFirst(coordinates):
+    idx = leftButtomCornerID(coordinates)
+    C = np.zeros_like(coordinates)
+    C[:(len(coordinates)-idx)] = coordinates[idx:]
+    C[(len(coordinates)-idx):] = coordinates[:idx]
+    return C
+
+def removeMiddlePoints(points, threshold = 2):
+    editedPoints = points[[0]]
+
+    for i in range(1, points.shape[0]-1):
+        v1 = points[[i]] - editedPoints[[-1]]
+        v2 = points[[i+1]] - editedPoints[[-1]]
+        if theta(v1, v2) > threshold: # grater than 5 degrees
+            editedPoints = np.append(editedPoints, points[[i]], axis = 0)
+
+    # Last point
+    i += 1
+    v1 = points[[i]] - editedPoints[[-1]]
+    v2 = points[[0]] - editedPoints[[-1]]
+    if theta(v1, v2) > threshold:
+        editedPoints = np.append(editedPoints, points[[i]], axis = 0)
+    
+    return editedPoints
+# %%
+def makeCoordsCCW(coordinates):
+    coords = np.array(coordinates)
+    # midPoint = coords.mean(axis = 0)
+    # angles = [np.arctan2(P[1], P[0])/np.pi * 180 for P in coords - midPoint]
+
+    # angles = np.array(angles)
+    # idx= np.argsort(angles)
+    # coords = coords[idx]
+
+    return coords
 
 
 def getFeature(BuildingAddress):
@@ -40,7 +89,23 @@ def getCoordinates(buildingID, transform=True):
     coordinates = np.array(coordinates)[np.searchsorted(
         np.array(coordinates)[:, 0], np.array(node_list))][:, 1:]
 
-    return np.flip(coordinates)
+    if transform:
+        XY = []
+        for x, y in coordinates:
+            xx, yy, _, _ = utm.from_latlon(x, y)
+            XY.append((xx,yy))
+        XY = np.array(XY)
+        # XY = XY - np.min(XY, axis = 0)
+
+        Points = makeCoordsCCW(XY)
+        Points = np.array([(P[0], P[1]) for P in Points])
+        Points = np.flip(Points, axis = 0)
+        Points = removeMiddlePoints(points= Points, threshold= 3)
+        Points = leftButtomFirst(Points)
+        return np.flip(Points)
+    else:
+        return np.flip(coordinates)
+
 
 
 def getValue(dict, key):
@@ -59,7 +124,8 @@ def PolyArea(Coordinates):
     try:
         x, y = Coordinates[:, 0], Coordinates[:, 1]
         return 0.5*np.abs(np.dot(x, np.roll(y, 1))-np.dot(y, np.roll(x, 1)))
-    except:
+    except Exception as err:
+        print(err)
         return None
 
 
@@ -85,7 +151,7 @@ def getBuidingInfoFromOSM(buildingAddress):
         levels = [int(tag['@v']) for tag in xmltodict.parse(content)
                   ['osm']['way']['tag'] if 'levels' in tag['@k']][0]
         levels = int(levels)
-        height = 2.8 * levels
+        height = round(2.8 * levels, 2)
     except:
         levels = None
         height = None
